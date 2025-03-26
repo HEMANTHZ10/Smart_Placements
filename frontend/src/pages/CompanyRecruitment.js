@@ -1,296 +1,450 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
-import { Filter, Download, ArrowUpRight } from 'lucide-react';
+import { Filter, Download, ArrowUpRight, Search } from 'lucide-react';
+import { dashboardService } from '../services/api';
 
-// Sample data for the company recruitment page
-const monthlyRecruitmentData = [
-  { month: 'Jan', companies: 5, offers: 45 },
-  { month: 'Feb', companies: 8, offers: 62 },
-  { month: 'Mar', companies: 6, offers: 51 },
-  { month: 'Apr', companies: 4, offers: 32 },
-  { month: 'May', companies: 3, offers: 28 },
-  { month: 'Jun', companies: 2, offers: 18 },
-  { month: 'Jul', companies: 7, offers: 58 },
-  { month: 'Aug', companies: 12, offers: 95 },
-  { month: 'Sep', companies: 15, offers: 120 },
-  { month: 'Oct', companies: 10, offers: 85 },
-  { month: 'Nov', companies: 8, offers: 70 },
-  { month: 'Dec', companies: 6, offers: 55 },
-];
 
-const topRecruitersData = [
-  { name: 'TCS', students: 45 },
-  { name: 'Infosys', students: 38 },
-  { name: 'Wipro', students: 32 },
-  { name: 'Accenture', students: 30 },
-  { name: 'IBM', students: 28 },
-  { name: 'Cognizant', students: 25 },
-  { name: 'HCL', students: 22 },
-  { name: 'Amazon', students: 18 },
-  { name: 'Microsoft', students: 15 },
-  { name: 'Google', students: 8 },
-];
-
-const roleDistributionData = [
-  { name: 'Software Engineer', value: 40 },
-  { name: 'Data Analyst', value: 15 },
-  { name: 'Business Analyst', value: 12 },
-  { name: 'Product Manager', value: 8 },
-  { name: 'UI/UX Designer', value: 7 },
-  { name: 'DevOps Engineer', value: 6 },
-  { name: 'Others', value: 12 },
-];
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
 const CompanyRecruitment = () => {
+  const [companyData, setCompanyData] = useState([]);
+  const [selectedYear, setSelectedYear] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [availableYears, setAvailableYears] = useState([]);
+  const [summaryStats, setSummaryStats] = useState({
+    totalCompanies: 0,
+    totalOffers: 0,
+    offersPerStudent: 0,
+    yearOverYearGrowth: {
+      companies: 0,
+      offers: 0,
+      offersPerStudent: 0
+    }
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedBranch, setSelectedBranch] = useState('ALL');
+  const BRANCHES = [
+    'ALL',
+    'CSE',
+    'CSBS',
+    'CYS',
+    'AIML',
+    'DS',
+    'IOT',
+    'IT',
+    'ECE',
+    'EEE',
+    'EIE',
+    'MECH',
+    'CIVIL',
+    'AUTO',
+    'AIDS'
+  ];
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const response = await dashboardService.getCompanyData();
+        const data = response;  // The actual data array from your backend
+        
+        if (!Array.isArray(data)) {
+          throw new Error('Invalid data format received');
+        }
+
+        const years = [...new Set(data.map(d => d.year))].sort((a, b) => b - a);
+        const currentYear = years[0];
+        const lastYear = years[1];
+        
+        setAvailableYears(years.slice(0, 5));
+        setSelectedYear(currentYear);
+        setCompanyData(data);
+
+        // Calculate summary statistics
+        const currentYearData = data.filter(d => d.year === currentYear);
+        const lastYearData = data.filter(d => d.year === lastYear);
+
+        const currentPackageStats = calculatePackageStats(currentYearData);
+        const lastPackageStats = calculatePackageStats(lastYearData);
+
+        const currentStats = {
+          totalCompanies: currentYearData.length,
+          totalOffers: currentYearData.reduce((sum, d) => sum + (d.total_offers || 0), 0),
+          offersPerStudent: calculateOffersPerStudent(currentYearData),
+          averagePackage: currentPackageStats.average,
+          highestPackage: currentPackageStats.highest
+        };
+
+        const lastYearStats = {
+          totalCompanies: lastYearData.length,
+          totalOffers: lastYearData.reduce((sum, d) => sum + (d.total_offers || 0), 0),
+          offersPerStudent: calculateOffersPerStudent(lastYearData),
+          averagePackage: lastPackageStats.average,
+          highestPackage: lastPackageStats.highest
+        };
+
+        setSummaryStats({
+          ...currentStats,
+          yearOverYearGrowth: {
+            companies: calculateGrowth(currentStats.totalCompanies, lastYearStats.totalCompanies),
+            offers: calculateGrowth(currentStats.totalOffers, lastYearStats.totalOffers),
+            offersPerStudent: calculateGrowth(currentStats.offersPerStudent, lastYearStats.offersPerStudent),
+            averagePackage: calculateGrowth(currentStats.averagePackage, lastYearStats.averagePackage),
+            highestPackage: calculateGrowth(currentStats.highestPackage, lastYearStats.highestPackage)
+          }
+        });
+
+      } catch (err) {
+        console.error('Error fetching company data:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const calculateTotalStudents = (company) => {
+    // Sum up students across all branches
+    const branches = ['CSE', 'CSBS', 'CYS', 'AIML', 'DS', 'IOT', 'IT', 'ECE', 
+                     'EEE', 'EIE', 'MECH', 'CIVIL', 'AUTO'];
+    return branches.reduce((sum, branch) => sum + (company[branch] || 0), 0);
+  };
+
+  const calculateGrowth = (current, previous) => {
+    if (!previous) return 0;
+    return ((current - previous) / previous * 100).toFixed(1);
+  };
+
+  const calculateOffersPerStudent = (companies) => {
+    const totalOffers = companies.reduce((sum, d) => sum + (d.total_offers || 0), 0);
+    const totalStudents = companies.reduce((sum, d) => sum + calculateTotalStudents(d), 0);
+    return totalStudents ? (totalOffers / totalStudents).toFixed(2) : '0.00';
+  };
+
+  const calculatePackageStats = (companies) => {
+    const validSalaries = companies
+      .filter(c => c.salary && typeof c.salary === 'number' && c.salary > 0)
+      .map(c => c.salary);
+    
+    return {
+      average: validSalaries.length ? 
+        (validSalaries.reduce((a, b) => a + b, 0) / validSalaries.length).toFixed(2) : '0.00',
+      highest: validSalaries.length ? 
+        Math.max(...validSalaries).toFixed(2) : '0.00'
+    };
+  };
+
+  const getSalaryRangeData = (year) => {
+    const ranges = [
+      { range: '0-5', min: 0, max: 5 },
+      { range: '5-10', min: 5, max: 10 },
+      { range: '10-15', min: 10, max: 15 },
+      { range: '15-20', min: 15, max: 20 },
+      { range: '20-25', min: 20, max: 25 },
+      { range: '25+', min: 25, max: Infinity }
+    ];
+
+    const yearData = companyData.filter(d => d.year === year);
+    return ranges.map(r => ({
+      range: `${r.range} LPA`,
+      count: yearData.filter(d => {
+        const salaryInLPA = d.salary || 0;
+        if (r.max === Infinity) {
+          return salaryInLPA >= r.min;
+        }
+        return salaryInLPA >= r.min && salaryInLPA < r.max;
+      }).length
+    }));
+  };
+
+  const getYearlyCompanyCount = () => {
+    return availableYears.map(year => ({
+      year: year.toString(),
+      companies: companyData.filter(d => d.year === year).length
+    }));
+  };
+
+  const getTop10Companies = (year) => {
+    return companyData
+      .filter(d => d.year === year)
+      .sort((a, b) => b.total_offers - a.total_offers)
+      .slice(0, 10)
+      .map(d => ({
+        name: d.company_name.length > 15 ? d.company_name.substring(0, 15) + '...' : d.company_name,
+        fullName: d.company_name,
+        offers: d.total_offers
+      }));
+  };
+
+  const getPackageTrends = () => {
+    return availableYears.map(year => {
+      const yearData = companyData.filter(d => d.year === year);
+      const packageStats = calculatePackageStats(yearData);
+      return {
+        year: year.toString(),
+        average: parseFloat(packageStats.average),
+        highest: parseFloat(packageStats.highest)
+      };
+    });
+  };
+
+  const YearFilter = () => (
+    <select
+      value={selectedYear}
+      onChange={(e) => setSelectedYear(Number(e.target.value))}
+      className="bg-white border border-gray-300 rounded-md px-3 py-1 text-sm"
+    >
+      {availableYears.map(year => (
+        <option key={year} value={year}>{year}</option>
+      ))}
+    </select>
+  );
+
+  const BranchFilter = () => (
+    <select
+      value={selectedBranch}
+      onChange={(e) => setSelectedBranch(e.target.value)}
+      className="bg-white border border-gray-300 rounded-md px-3 py-1 text-sm"
+    >
+      {BRANCHES.map(branch => (
+        <option key={branch} value={branch}>{branch}</option>
+      ))}
+    </select>
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-red-600">Error: {error}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-800">Company Recruitment Analysis</h1>
-        <div className="flex space-x-3">
-          <button className="flex items-center bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-50">
-            <Filter className="h-4 w-4 mr-2" />
-            Filter
-          </button>
-          <button className="flex items-center bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </button>
-        </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white p-4 rounded-lg shadow-md">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-700">Total Companies</h2>
-            <div className="text-2xl font-bold text-indigo-600">86</div>
+            <div className="text-2xl font-bold text-indigo-600">{summaryStats.totalCompanies}</div>
           </div>
           <p className="text-sm text-gray-500">Current academic year</p>
-          <div className="mt-2 text-green-500 text-sm flex items-center">
-            <span>↑ 12% from last year</span>
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-md">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-700">Total Offers</h2>
-            <div className="text-2xl font-bold text-indigo-600">719</div>
-          </div>
-          <p className="text-sm text-gray-500">Current academic year</p>
-          <div className="mt-2 text-green-500 text-sm flex items-center">
-            <span>↑ 8.3% from last year</span>
+          <div className={`mt-2 ${summaryStats.yearOverYearGrowth.companies >= 0 ? 'text-green-500' : 'text-red-500'} text-sm flex items-center`}>
+            <span>{summaryStats.yearOverYearGrowth.companies >= 0 ? '↑' : '↓'} {Math.abs(summaryStats.yearOverYearGrowth.companies)}% from last year</span>
           </div>
         </div>
         
         <div className="bg-white p-4 rounded-lg shadow-md">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-700">Offers per Student</h2>
-            <div className="text-2xl font-bold text-indigo-600">1.24</div>
+            <div className="text-2xl font-bold text-indigo-600">{summaryStats.offersPerStudent}</div>
           </div>
           <p className="text-sm text-gray-500">Current academic year</p>
-          <div className="mt-2 text-green-500 text-sm flex items-center">
-            <span>↑ 5.1% from last year</span>
+          <div className={`mt-2 ${summaryStats.yearOverYearGrowth.offersPerStudent >= 0 ? 'text-green-500' : 'text-red-500'} text-sm flex items-center`}>
+            <span>{summaryStats.yearOverYearGrowth.offersPerStudent >= 0 ? '↑' : '↓'} {Math.abs(summaryStats.yearOverYearGrowth.offersPerStudent)}% from last year</span>
           </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg shadow-md">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-700 mb-4">Package Details</h2>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600">Average Package:</span>
+                <span className="text-lg font-semibold text-indigo-600">{summaryStats.averagePackage} LPA</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600">Highest Package:</span>
+                <span className="text-lg font-semibold text-indigo-600">{summaryStats.highestPackage} LPA</span>
+              </div>
+            </div>
+          </div>
+          <p className="text-sm text-gray-500">Current academic year</p>
         </div>
       </div>
       
       <div className="bg-white p-6 rounded-lg shadow-md">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Monthly Recruitment Activity</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-700">Company Distribution by Package Range</h2>
+          <YearFilter />
+        </div>
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={monthlyRecruitmentData}>
+          <BarChart data={getSalaryRangeData(selectedYear)}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" />
-            <YAxis yAxisId="left" />
-            <YAxis yAxisId="right" orientation="right" />
+            <XAxis 
+              dataKey="range" 
+              interval={0} 
+              height={50}
+              tick={{ fontSize: 12 }}
+            />
+            <YAxis 
+              tick={{ fontSize: 12 }}
+            />
             <Tooltip />
             <Legend />
-            <Line yAxisId="left" type="monotone" dataKey="companies" name="Companies Visited" stroke="#8884d8" activeDot={{ r: 8 }} />
-            <Line yAxisId="right" type="monotone" dataKey="offers" name="Offers Made" stroke="#82ca9d" />
+            <Bar dataKey="count" name="Number of Companies" fill="#8884d8" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <h2 className="text-lg font-semibold text-gray-700 mb-4">Companies Visited (Last 5 Years)</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={getYearlyCompanyCount()}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="year" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="companies" name="Number of Companies" fill="#82ca9d" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <h2 className="text-lg font-semibold text-gray-700 mb-4">Package Trends (Last 5 Years)</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={getPackageTrends()}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis 
+              dataKey="year"
+              tick={{ fontSize: 12 }}
+            />
+            <YAxis 
+              tick={{ fontSize: 12 }}
+              label={{ 
+                value: 'Package (LPA)', 
+                angle: -90, 
+                position: 'insideLeft',
+                style: { textAnchor: 'middle' }
+              }}
+            />
+            <Tooltip />
+            <Legend />
+            <Line 
+              type="monotone" 
+              dataKey="highest" 
+              name="Highest Package" 
+              stroke="#8884d8" 
+              strokeWidth={2}
+              dot={{ r: 6 }}
+            />
+            <Line 
+              type="monotone" 
+              dataKey="average" 
+              name="Average Package" 
+              stroke="#82ca9d" 
+              strokeWidth={2}
+              dot={{ r: 6 }}
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-lg font-semibold text-gray-700 mb-4">Top Recruiters</h2>
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart
-              data={topRecruitersData}
-              layout="vertical"
-              margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" />
-              <YAxis dataKey="name" type="category" />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="students" name="Students Hired" fill="#8884d8" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-lg font-semibold text-gray-700 mb-4">Role Distribution</h2>
-          <ResponsiveContainer width="100%" height={350}>
-            <PieChart>
-              <Pie
-                data={roleDistributionData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={120}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {roleDistributionData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-      
       <div className="bg-white p-6 rounded-lg shadow-md">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Recent Recruitment Drives</h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Company</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Positions</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Offers</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Package (LPA)</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              <tr>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="text-sm font-medium text-gray-900">Microsoft</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">15 Oct 2023</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">Software Engineer</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">15</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">18-22</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <button className="text-indigo-600 hover:text-indigo-900 flex items-center">
-                    Details <ArrowUpRight className="h-3 w-3 ml-1" />
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="text-sm font-medium text-gray-900">Amazon</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">12 Oct 2023</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">SDE I, II</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">18</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">16-25</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <button className="text-indigo-600 hover:text-indigo-900 flex items-center">
-                    Details <ArrowUpRight className="h-3 w-3 ml-1" />
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="text-sm font-medium text-gray-900">TCS</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">5 Oct 2023</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">Digital, Ninja, Ninja+</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">45</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">3.6-7.5</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <button className="text-indigo-600 hover:text-indigo-900 flex items-center">
-                    Details <ArrowUpRight className="h-3 w-3 ml-1" />
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="text-sm font-medium text-gray-900">Infosys</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">28 Sep 2023</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">Systems Engineer, Power Programmer</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">38</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">3.6-8</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <button className="text-indigo-600 hover:text-indigo-900 flex items-center">
-                    Details <ArrowUpRight className="h-3 w-3 ml-1" />
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="text-sm font-medium text-gray-900">Google</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">20 Sep 2023</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">Software Engineer</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">8</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">20-25</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <button className="text-indigo-600 hover:text-indigo-900 flex items-center">
-                    Details <ArrowUpRight className="h-3 w-3 ml-1" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-700">Top 10 Recruiters</h2>
+          <YearFilter />
+        </div>
+        <ResponsiveContainer width="100%" height={400}>
+          <BarChart
+            data={getTop10Companies(selectedYear)}
+            layout="vertical"
+            margin={{ top: 5, right: 30, left: 150, bottom: 5 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis type="number" />
+            <YAxis 
+              dataKey="name" 
+              type="category"
+              width={140}
+              tick={{ fontSize: 12 }}
+            />
+            <Tooltip 
+              formatter={(value, name, props) => [value, props.payload.fullName]}
+            />
+            <Legend />
+            <Bar dataKey="offers" name="Total Offers" fill="#8884d8" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-gray-700">Company Recruitment Details</h2>
+          <div className="flex gap-4 items-center">
+            <YearFilter />
+            <BranchFilter />
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search companies..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 pr-4 py-1 border border-gray-300 rounded-md"
+              />
+              <Search className="h-4 w-4 absolute left-2 top-2 text-gray-400" />
+            </div>
+          </div>
+        </div>
+        <div className="overflow-hidden">
+          <div className="max-h-[400px] overflow-y-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Company</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {selectedBranch === 'ALL' ? 'Total Offers' : `${selectedBranch} Offers`}
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Package (LPA)</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {companyData
+                  .filter(d => d.year === selectedYear)
+                  .filter(d => d.company_name.toLowerCase().includes(searchQuery.toLowerCase()))
+                  .filter(d => selectedBranch === 'ALL' ? true : d[selectedBranch] > 0)
+                  .sort((a, b) => a.company_name.localeCompare(b.company_name))
+                  .map((company, index) => (
+                    <tr key={index}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{company.company_name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {selectedBranch === 'ALL' ? 
+                            (company.total_offers || 0) : 
+                            (company[selectedBranch] || 0)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {company.salary ? `${company.salary.toFixed(2)}` : 'N/A'}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
